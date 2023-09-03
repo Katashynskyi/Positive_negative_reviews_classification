@@ -1,0 +1,37 @@
+You’re given a dataset of product reviews by customers. The task is simply to classify reviews as positive or negative ones, achieving the best balanced accuracy you can. However, your solution should also be efficient and capable of running even on lower-tier machines. We don’t set any strict conditions besides the solution not requiring GPU and running reasonably fast on lower-end CPUs, but your creativity and skills in terms of squeezing the best performance from lightweight pipelines will be appreciated. While the main output of your work is the inference code for us to test it, we encourage you to also provide any additional code/notebooks (EDA, training, etc.). Their good quality will be an advantage.
+
+The dataset is provided as 2 standard comma-separated CSV files. Each of them contains review IDs and either reviews themselves or their labels, respectively. Your solution will be evaluated on a private test dataset that is sampled from the same data distribution as the one provided to you. Feel free to train your model on the provided dataset from scratch or use third-party datasets for pretraining.
+
+When delivering your solution, the inference code should be placed in a separate script called inference.py. It should be possible to install all the necessary packages to run it from requirements.txt using pip.
+* All the additional files, like saved model parameters, should be placed near the inference script and loaded automatically. The inference script should accept an input file and write classification results into an output file in the same format as the provided dataset. A command to run your script should look as follows:
+python3 inference.py test_reviews.csv test_labels_pred.csv
+
+All the additional code can be provided either as plain Python scripts or Jupyter notebooks without any specific requirements for their interface. You’re encouraged to add a README on how to use them properly.
+
+Deliverable:
+Working training and inference code,
+Any necessary supplementary files,
+A short report [in English] on the principle of operation of your solution (better with some illustrations)
+
+
+
+Вам надається набір даних відгуків клієнтів про продукт. Завдання полягає в тому, щоб просто класифікувати відгуки як позитивні чи негативні, досягнувши максимальної збалансованої точності. Однак ваше рішення також має бути ефективним і здатним працювати навіть на машинах нижчого рівня. Ми не встановлюємо жодних суворих умов, окрім того, щоб рішення не потребувало графічного процесора та достатньо швидко працювало на процесорах нижчого класу, але ваша креативність і навички щодо досягнення найкращої продуктивності з легких конвеєрів будуть оцінені.
+#TODO: Done!~~ Хоча основним результатом вашої роботи є вихідний код для тестування, ми радимо вам також надати будь-який додатковий код/блокноти (EDA, навчання тощо). Їх хороша якість буде перевагою.
+
+Набір даних надається як 2 стандартні файли CSV, розділені комами. Кожна з них містить ідентифікатори огляду та або самі відгуки, або їхні мітки відповідно. Ваше рішення буде оцінено на основі приватного тестового набору даних, взятого з того самого розподілу даних, що й наданий вам.
+ #TODO: Done!~~ Не соромтеся навчати свою модель на наданому наборі даних з нуля або використовувати набори даних сторонніх розробників для попереднього навчання.
+
+Під час доставки вашого рішення код висновку слід розмістити в окремому сценарії під назвою inference.py.
+#TODO: IN THE END~~ Має бути можливість інсталювати всі необхідні пакети для його запуску з requirements.txt за допомогою pip.
+#TODO: OK~~ Усі додаткові файли, як-от збережені параметри моделі, слід розміщувати біля сценарію виведення та завантажувати автоматично.
+#TODO: OK~~ Сценарій висновку повинен приймати вхідний файл і записувати результати класифікації у вихідний файл у тому самому форматі, що й наданий набір даних. Команда для запуску сценарію має виглядати так:
+#TODO: OK~~ python3 inference.py test_reviews.csv test_labels_pred.csv
+
+#TODO:OK~~ Увесь додатковий код можна надати у вигляді простих сценаріїв Python або блокнотів Jupyter без будь-яких спеціальних вимог до їх інтерфейсу.
+#TODO:IN THE END~~ Рекомендуємо додати файл README про те, як правильно ними користуватися.
+
+Результати:
+Робочий тренінг і код висновку,
+Будь-які необхідні додаткові файли,
+Короткий звіт [англійською] про принцип роботи вашого рішення (
+#TODO:METRICS PICS (VISUALIZATION) +Wordclouds+ ??? краще з деякими ілюстраціями)
