@@ -1,39 +1,59 @@
-import sys
+from utils.utils_inference import load_model, tfidf, clean_text
+import argparse
 import pandas as pd
-from train import load_model
 
-# Check if the correct number of arguments is provided
-if len(sys.argv) != 3:
-    print("Usage: python inference.py input_csv_file output_csv_file")
-    sys.exit(1)  # Exit with an error code
 
-# Extract the input and output file names from command-line arguments
-input_csv_file = sys.argv[1]
-output_csv_file = sys.argv[2]
-
-# Load the input CSV file (test_reviews.csv in this case)
-try:
+def main(input_csv_file, output_csv_file, model_file="logisticregression_model.pkl"):
     df = pd.read_csv(input_csv_file)
-except FileNotFoundError:
-    print(f"Error: File '{input_csv_file}' not found.")
-    sys.exit(1)
+    df["text"] = df["text"].apply(clean_text)
+    test_X = tfidf(df[["text"]], max_features=50, features="all")
+    loaded_model = load_model(f"{model_file}_model.pkl")
 
-print(df)
+    # Make predictions on the test data
+    predictions = loaded_model.predict(test_X)
 
-# Load a model (replace 'LogisticRegression' with the desired model name)
-loaded_logreg_model = load_model("Logisticregressio Model")
-type(loaded_logreg_model)
-# Perform your inference or prediction logic on the loaded data (df) here
-# This is where you would typically process the test reviews and generate predictions
+    # Create a mapping dictionary for labels
+    label_mapping = {0: "Negative", 1: "Positive"}
 
-# Save the predictions or results to the output CSV file (test_labels_pred.csv in this case)
-# For demonstration, let's create a simple DataFrame with dummy predictions
-dummy_predictions = pd.DataFrame(
-    {
-        "id": df["id"],  # Assuming a column named 'id' in your input data
-        "PredictedLabel": [0]
-        * len(df),  # Dummy predictions, replace with your actual predictions
-    }
-)
+    # Replace numeric labels with text labels
+    predictions_text = [label_mapping[label] for label in predictions]
 
-dummy_predictions.to_csv(output_csv_file, index=False)
+    # Create a DataFrame with 'id' and 'sentiment' columns
+    output_df = pd.DataFrame(
+        {
+            "id": df["id"],  # Assuming a column named 'id' in your input data
+            "sentiment": predictions_text,  # Use the text labels
+        }
+    )
+
+    # Save the predictions to the output CSV file
+    output_df.to_csv(output_csv_file, index=False)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Predict labels using a trained model."
+    )
+    parser.add_argument(
+        "input_csv_file",
+        nargs="?",
+        default="test_reviews.csv",
+        help="Input CSV file containing text data (default: test_reviews.csv).",
+    )
+    parser.add_argument(
+        "output_csv_file",
+        nargs="?",
+        default="test_labels_pred.csv",
+        help="Output CSV file to save predictions (default: predictions.csv).",
+    )
+    parser.add_argument(
+        "model_file",
+        nargs="?",
+        default="xgbclassifier",
+        help="Trained model file. Choose from 'logisticregression', 'svc', or 'xgbclassifier'. (default: 'xgbclassifier')",
+    )
+
+    args = parser.parse_args()
+
+    main(args.input_csv_file, args.output_csv_file, args.model_file)
+    print("test_labels_pred.csv file generated, congrats!")

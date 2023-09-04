@@ -1,5 +1,4 @@
-*.jpg
-models/
+test_labels_pred.csv
 EDA/models/
 test/
 .idea/
