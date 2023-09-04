@@ -76,7 +76,6 @@ class Split:
 
         return self
 
-
     def get_train_data(self):  # -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Splitting df.

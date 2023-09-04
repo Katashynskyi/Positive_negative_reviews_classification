@@ -1,546 +1,501 @@
-import argparse
-import logging as logger
-import warnings
-import os
-import mlflow
-import numpy as np
-import optuna
 import pandas as pd
+import numpy as np
+import nltk
+import re
+import os
+import string
+import pickle
+import warnings
 from sklearn.svm import SVC
-from src.utils import Split
-from optuna.integration import OptunaSearchCV
+from xgboost import XGBClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from datetime import datetime
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import GridSearchCV
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     roc_auc_score,
 )
-from sklearn.model_selection import StratifiedKFold
-from sklearn.pipeline import make_pipeline
-from sklearn.linear_model import LogisticRegression
-from xgboost import XGBClassifier
+from PIL import Image
+from IPython.display import Image, display
 
-from src.features_preprocessing import Preprocessor
-
-# Preset settings
 RANDOM_STATE = 42
-pd.set_option("display.width", 1000)
-pd.set_option("display.max_columns", None)
-pd.set_option("display.max_colwidth", None)
-warnings.filterwarnings("ignore")
-logger.getLogger().setLevel(logger.INFO)
+
+nltk.download("vader_lexicon")
+pd.set_option("display.max_columns", 20)
+pd.set_option("display.max_rows", 500)
+
+# Suppress ConvergenceWarnings from scikit-learn
+warnings.filterwarnings("ignore", category=Warning)
 
 
-class ClassifierModel:
-    def __init__(
-        self,
-        df_path,
-        target_path,
-        n_samples=-1,
-        n_trials=5,
-        classifier_type: str = "logreg",
-        save_model=False,
-    ):
-        self.df_path = df_path
-        self.target_path = target_path
-        self.n_samples = n_samples
-        self.n_trials = n_trials
+# Setup dataframe
+# From internet
+# url='https://drive.google.com/file/d/1eEtlmdLUTZnyY34g9bL5D3XuWLzSEqBU/view?usp=sharing'
+# path ='https://drive.google.com/uc?id=' + url.split('/')[-2]
+# df = pd.read_csv(path)
 
-        self.classifier_type = classifier_type
-        self.save_model = save_model
-        self.skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=RANDOM_STATE)
-        self.train_X = self.train_y = self.test_X = self.test_y = None,None,None,None
+# url="https://drive.google.com/file/d/1x2Tdn1UGhQ6x08yfchUykUJvid257vFY/view?usp=sharing"
+# path ='https://drive.google.com/uc?id=' + url.split('/')[-2]
+# df2 = pd.read_csv(path)
 
-    def _training_setup(self):
-        # Split
-        self.train_X, self.train_y = Split(
-            df_path=self.df_path, target_path=self.target_path
-        ).get_train_data()
+# # # Locally Home PC
+# df = pd.read_csv("D:/Programming/DB's/Positive_negative_reviews_classification/reviews.csv")
+# df2 = pd.read_csv("D:/Programming/DB's/Positive_negative_reviews_classification/labels.csv")
 
-        self.test_X, self.test_y = Split(
-            df_path=self.df_path, target_path=self.target_path
-        ).get_test_data()
+# # Locally work PC
+df = pd.read_csv(
+    "D:/Programming/db's/Positive_negative_reviews_classification_data/reviews.csv"
+)
+df2 = pd.read_csv(
+    "D:/Programming/db's/Positive_negative_reviews_classification_data/labels.csv"
+)
 
-        # Model pipeline
-        if self.classifier_type == "logreg":
-            logreg_pipeline = make_pipeline(
-                Preprocessor(tfidf_on=True, tf_idf_max_features=100),
-                LogisticRegression(
-                    random_state=RANDOM_STATE, class_weight={0: 50, 1: 50}
-                ),
-            )
+# Create a mapping dictionary
+mapping = {"Positive": 1, "Negative": 0}
 
-            """init hyper-param"""
-            param_distributions = {
-                "logisticregression__C": optuna.distributions.CategoricalDistribution(
-                    [1.0]
-                ),
-            }
-
-            """optimization"""
-            self.pipeline = OptunaSearchCV(
-                logreg_pipeline,
-                param_distributions,
-                cv=self.skf,
-                n_trials=self.n_trials,
-                random_state=RANDOM_STATE,
-                verbose=0,
-                scoring="recall",
-            )
-
-        elif self.classifier_type == "svc":
-            svc_pipeline = make_pipeline(
-                Preprocessor(tfidf_on=True, tf_idf_max_features=100),
-                SVC(random_state=RANDOM_STATE, class_weight={0: 50, 1: 50}),
-            )
-
-            """init hyper-param"""
-            param_distributions = {
-                "logisticregression__C": optuna.distributions.CategoricalDistribution(
-                    [1, 10, 50, 100, 200, 500]
-                ),
-            }
-
-            """optimization"""
-            self.pipeline = OptunaSearchCV(
-                svc_pipeline,
-                param_distributions,
-                cv=self.skf,
-                n_trials=self.n_trials,
-                random_state=RANDOM_STATE,
-                verbose=0,
-                scoring="recall",
-            )
-
-        elif self.classifier_type == "xgb":
-            xgb_pipeline = make_pipeline(
-                Preprocessor(tfidf_on=True, tf_idf_max_features=100),
-                XGBClassifier(random_state=RANDOM_STATE),
-            )
-
-            """init hyper-param"""
-            param_distributions = {
-                "xgbclassifier__learning_rate": optuna.distributions.CategoricalDistribution(
-                    [0.001, 0.005, 0.01, 0.05, 0.1]
-                ),
-                "xgbclassifier__max_depth": optuna.distributions.CategoricalDistribution(
-                    [10, 8, 5]
-                ),
-                "xgbclassifier__min_child_weight": optuna.distributions.CategoricalDistribution(
-                    [15, 13, 11]
-                ),
-                # imbalance param: subsample: 0-1
-                "xgbclassifier__subsample": optuna.distributions.CategoricalDistribution(
-                    [0.6, 0.7]
-                ),
-                "xgbclassifier__n_estimators": optuna.distributions.CategoricalDistribution(
-                    [500, 600, 800, 1000]
-                ),
-                # imbalance param: scale_pos_weight :  sum(negative instances) / sum(positive instances)
-                "xgbclassifier__scale_pos_weight": optuna.distributions.CategoricalDistribution(
-                    [9.85]
-                ),
-                # imbalance param: max_delta_step : 1-10
-                "xgbclassifier__max_delta_step": optuna.distributions.CategoricalDistribution(
-                    [10]
-                ),
-            }
-
-            """optimization"""
-            self.pipeline = OptunaSearchCV(
-                xgb_pipeline,
-                param_distributions,
-                cv=self.skf,
-                n_trials=self.n_trials,
-                random_state=RANDOM_STATE,
-                verbose=0,
-                scoring="roc_auc",
-            )
+# Use the map function to replace values
+df2.sentiment = df2.sentiment.map(mapping)
 
 
-    def train(self):
-        """... and one method to rule them all. (c)"""
-        self._training_setup()
-        train_X, train_y = self.train_X, self.train_y
+# ### Preprocessing
 
-        """MLFlow Config"""
-        logger.info("Setting up MLFlow Config")
+# #### Duplicates
+# * we drop the duplicate
+df.drop(121, axis=0, inplace=True)
+df2.drop(121, axis=0, inplace=True)
 
-        mlflow.set_experiment("Positive & Negative reviews classifier")
+# ## Analysis
 
-        # """Search for previous runs and get run_id if present"""
-        # logger.info("Searching for previous runs for given model type")
-        # df_runs = mlflow.search_runs(filter_string="tags.Model = '{0}'".format('XGB'))
-        # df_runs = df_runs.loc[~df_runs['tags.Version'].isna(), :] if 'tags.Version' in df_runs else pd.DataFrame()
-        # run_id = df_runs.loc[df_runs['tags.Version'] == run_version, 'run_id'].iloc[0]
-        # run_id =3
-        # load_prev = True
-        # run_version = len(df_runs) + 1
 
-        """Train model and save train metrics to mlflow"""
-        with mlflow.start_run():
-            mlflow.set_tag(
-                "mlflow.runName", f"train_{mlflow.active_run().info.run_name}"
-            )
-            """Train & predict"""
-            self.pipeline.fit(train_X, train_y)
-            logger.info("train is done")
-            logger.info("↓↓↓ TRAIN METRICS ↓↓↓")
+def clean_text(text):
+    text = text.lower()
 
-            # """Get mean train & validation metrics"""
-            # precision_scores, recall_scores, macro_f1, weighted_f1, auc, best_score = (
-            #     [],
-            #     [],
-            #     [],
-            #     [],
-            #     [],
-            #     [],
-            # )
-            # tn_train, tp_train, fp_train, fn_train = [], [], [], []
+    # Define the pattern to match "Sent from..." and everything after it
+    cleaned_text = re.sub(r"Sent from.*$", "", text)
 
-            # for i, (train_idx, valid_idx) in enumerate(
-            #     self.skf.split(train_X, train_y)
-            # ):
-            #     # Train & validation indexes
-            #     fold_train_x, fold_valid_x = (
-            #         train_X.iloc[train_idx],
-            #         train_X.iloc[valid_idx],
-            #     )
-            #     fold_train_y, fold_valid_y = (
-            #         train_y.iloc[train_idx],
-            #         train_y.iloc[valid_idx],
-            #     )
-            #     fold_pred_y_train = self.pipeline.predict(fold_train_x)
-            #
-            #     """classification report of train set"""
-            #     df = pd.DataFrame(
-            #         classification_report(
-            #             y_true=fold_train_y,
-            #             y_pred=fold_pred_y_train,
-            #             output_dict=1,
-            #             target_names=["non-toxic", "toxic"],
-            #         )
-            #     ).transpose()
-            #
-            #     # Precision
-            #     precision_scores.append(np.round(df.loc["toxic", "precision"], 2))
-            #     # Recall
-            #     recall_scores.append(np.round(df.loc["toxic", "recall"], 2))
-            #     # Macro f1
-            #     macro_f1.append(np.round(df.loc["macro avg", "f1-score"], 2))
-            #     # Weighted f1
-            #     weighted_f1.append(np.round(df.loc["weighted avg", "f1-score"], 2))
-            #     # Best Score
-            #     best_score.append(self.pipeline.best_score_)
-            #     # AUC
-            #     auc.append(roc_auc_score(fold_train_y, fold_pred_y_train))
-            #     # Confusion matrix
-            #     conf_matrix = confusion_matrix(fold_train_y, fold_pred_y_train)
-            #     tn_train.append(conf_matrix[0][0])
-            #     tp_train.append(conf_matrix[1][1])
-            #     fp_train.append(conf_matrix[0][1])
-            #     fn_train.append(conf_matrix[1][0])
-            #
-            # # Compute the mean of the metrics
-            # mean_precision = sum(precision_scores) / len(precision_scores)
-            # mean_recall = sum(recall_scores) / len(recall_scores)
-            # mean_macro_f1 = sum(macro_f1) / len(macro_f1)
-            # mean_weighted_f1 = sum(weighted_f1) / len(weighted_f1)
-            # mean_auc_train = round((sum(auc) / len(auc)), 2)
-            # # mean_best_score_train = sum(best_score) / len(best_score)
-            # mean_tn_train = int(sum(tn_train) / len(tn_train))
-            # mean_tp_train = int(sum(tp_train) / len(tp_train))
-            # mean_fp_train = int(sum(fp_train) / len(fp_train))
-            # mean_fn_train = int(sum(fn_train) / len(fn_train))
-            #
-            # """Show train metrics"""
-            # # TODO: how to insert classification_report of cross validation?
-            # #  I have no train_y, pred_y, and can't use mean
-            # # logger.info(
-            # #     f"\n{pd.DataFrame(classification_report(train_y, pred_y, output_dict=1, target_names=['non-toxic', 'toxic'])).transpose()}"
-            # # )
-            # logger.info(f"\n    Area Under the Curve score: {mean_auc_train}")
-            # logger.info(
-            #     f"\n Correlation matrix"
-            #     f"\n (true negatives, false positives)\n (false negatives, true positives)"
-            #     f"\n {mean_tn_train, mean_fp_train}\n {mean_fn_train, mean_tp_train}"
-            # )
-            # logger.info("Training Complete. Logging train results into MLFlow")
-            #
-            # """Log train metrics"""
-            # # Precision
-            # mlflow.log_metric("Precision", mean_precision)
-            #
-            # # Recall
-            # mlflow.log_metric("Recall", mean_recall)
-            #
-            # # macro_f1
-            # mlflow.log_metric("F1_macro", mean_macro_f1)
-            #
-            # # weighted_f1
-            # mlflow.log_metric("F1_weighted", mean_weighted_f1)
-            #
-            # # Best Score
-            # # mlflow.log_metric("Best Score", "%.2f " % mean_best_score_train)
-            #
-            # # AUC
-            # mlflow.log_metric("AUC", mean_auc_train)
-            #
-            # # Confusion matrix
-            # mlflow.log_metric("Conf_TN", mean_tn_train)
-            # mlflow.log_metric("Conf_TP", mean_tp_train)
-            # mlflow.log_metric("Conf_FP", mean_fp_train)
-            # mlflow.log_metric("Conf_FN", mean_fn_train)
-            #
-            # """Log hyperparams"""
-            # # best of hyperparameter tuning
-            # mlflow.log_param(
-            #     "Best Params",
-            #     {k: round(v, 2) for k, v in self.pipeline.best_params_.items()},
-            # )
-            #
-            # # number of input comments
-            # mlflow.log_param("n_samples", self.n_samples)
-            #
-            # # number of trials of hyperparameter tuning
-            # mlflow.log_param("n_trials", self.n_trials)
-            #
-            # """log model type"""
-            # mlflow.set_tag("Model", self.classifier_type)
+    # Define the pattern to match "Order" followed by numbers and spaces Use re.sub() to replace the pattern with "order"
+    cleaned_text = re.sub(r"Order\s*\(#\d+\)", "order number", text)
 
-        # """Predict valid metrics and save to mlflow"""
-        # with mlflow.start_run():
-        #     mlflow.set_tag(
-        #         "mlflow.runName", f"valid_{mlflow.active_run().info.run_name}"
-        #     )
-        #
-        #     """Get mean validation metrics"""
-        #     precision_scores, recall_scores, macro_f1, weighted_f1, auc, best_score = (
-        #         [],
-        #         [],
-        #         [],
-        #         [],
-        #         [],
-        #         [],
-        #     )
-        #     tn_valid, tp_valid, fp_valid, fn_valid = [], [], [], []
-        #
-        #     for i, (train_idx, valid_idx) in enumerate(
-        #         self.skf.split(train_X, train_y)
-        #     ):
-        #         # Train & validation indexes
-        #         fold_train_x, fold_valid_x = (
-        #             train_X.iloc[train_idx],
-        #             train_X.iloc[valid_idx],
-        #         )
-        #         fold_train_y, fold_valid_y = (
-        #             train_y.iloc[train_idx],
-        #             train_y.iloc[valid_idx],
-        #         )
-        #         fold_pred_y_valid = self.pipeline.predict(fold_valid_x)
-        #
-        #         """classification report of valid set"""
-        #         df = pd.DataFrame(
-        #             classification_report(
-        #                 y_true=fold_valid_y,
-        #                 y_pred=fold_pred_y_valid,
-        #                 output_dict=1,
-        #                 target_names=["non-toxic", "toxic"],
-        #             )
-        #         ).transpose()
-        #
-        #         # Precision
-        #         precision_scores.append(np.round(df.loc["toxic", "precision"], 2))
-        #         # Recall
-        #         recall_scores.append(np.round(df.loc["toxic", "recall"], 2))
-        #         # Macro f1
-        #         macro_f1.append(np.round(df.loc["macro avg", "f1-score"], 2))
-        #         # Weighted f1
-        #         weighted_f1.append(np.round(df.loc["weighted avg", "f1-score"], 2))
-        #         # Best Score
-        #         best_score.append(self.pipeline.best_score_)
-        #         # AUC
-        #         auc.append(roc_auc_score(fold_valid_y, fold_pred_y_valid))
-        #         # Confusion matrix
-        #         conf_matrix = confusion_matrix(fold_valid_y, fold_pred_y_valid)
-        #         tn_valid.append(conf_matrix[0][0])
-        #         tp_valid.append(conf_matrix[1][1])
-        #         fp_valid.append(conf_matrix[0][1])
-        #         fn_valid.append(conf_matrix[1][0])
-        #
-        #     # Compute the mean of the metrics
-        #     mean_precision = sum(precision_scores) / len(precision_scores)
-        #     mean_recall = sum(recall_scores) / len(recall_scores)
-        #     mean_macro_f1 = sum(macro_f1) / len(macro_f1)
-        #     mean_weighted_f1 = sum(weighted_f1) / len(weighted_f1)
-        #     mean_auc = round((sum(auc) / len(auc)), 2)
-        #     # mean_best_score = sum(best_score) / len(best_score)
-        #     mean_tn_valid = int(sum(tn_valid) / len(tn_valid))
-        #     mean_tp_valid = int(sum(tp_valid) / len(tp_valid))
-        #     mean_fp_valid = int(sum(fp_valid) / len(fp_valid))
-        #     mean_fn_valid = int(sum(fn_valid) / len(fn_valid))
-        #
-        #     logger.info("↓↓↓ VALID METRICS ↓↓↓")
-        #     """Show valid metrics"""
-        #     # TODO: how to insert classification_report of cross validation?
-        #     #  I have no train_y, pred_y, and can't use mean
-        #     # logger.info(
-        #     #     f"\n{pd.DataFrame(classification_report(train_y, pred_y, output_dict=1, target_names=['non-toxic', 'toxic'])).transpose()}"
-        #     # )
-        #     logger.info(f"\n    Area Under the Curve score: {mean_auc}")
-        #     logger.info(
-        #         f"\n Correlation matrix"
-        #         f"\n (true negatives, false positives)\n (false negatives, true positives)"
-        #         f"\n {mean_tn_valid, mean_fp_valid}\n {mean_fn_valid, mean_tp_valid}"
-        #     )
-        #     logger.info("Logging validation results into MLFlow")
-        #
-        #     """Log valid metrics"""
-        #     # Precision
-        #     mlflow.log_metric("Precision", mean_precision)
-        #
-        #     # Recall
-        #     mlflow.log_metric("Recall", mean_recall)
-        #
-        #     # macro_f1
-        #     mlflow.log_metric("F1_macro", mean_macro_f1)
-        #
-        #     # weighted_f1
-        #     mlflow.log_metric("F1_weighted", mean_weighted_f1)
-        #
-        #     # # Best Score
-        #     # mlflow.log_metric("Best Score", "%.2f " % mean_best_score)
-        #
-        #     # AUC
-        #     mlflow.log_metric("AUC", mean_auc)
-        #
-        #     # Confusion matrix
-        #     mlflow.log_metric("Conf_TN", mean_tn_valid)
-        #     mlflow.log_metric("Conf_TP", mean_tp_valid)
-        #     mlflow.log_metric("Conf_FP", mean_fp_valid)
-        #     mlflow.log_metric("Conf_FN", mean_fn_valid)
-        #
-        # """Predict test metrics and save to mlflow"""
-        # with mlflow.start_run():
-        #     mlflow.set_tag(
-        #         "mlflow.runName", f"test_{mlflow.active_run().info.run_name}"
-        #     )
-        #     test_x, test_y = self.test_X, self.test_y
-        #     """Predict on test data"""
-        #     pred_y = self.pipeline.predict(test_x)
-        #     # self.pipeline.save()
-        #
-        #     """classification report of train set"""
-        #     df = pd.DataFrame(
-        #         classification_report(
-        #             y_true=test_y,
-        #             y_pred=pred_y,
-        #             output_dict=1,
-        #             target_names=["non-toxic", "toxic"],
-        #         )
-        #     ).transpose()
-        #
-        #     """Show test metrics"""
-        #     logger.info("↓↓↓ TEST METRICS ↓↓↓")
-        #     logger.info(
-        #         f"\n{pd.DataFrame(classification_report(test_y, pred_y, output_dict=1, target_names=['non-toxic', 'toxic'])).transpose()}"
-        #     )
-        #     logger.info(
-        #         f"\n    Area Under the Curve score: {round(roc_auc_score(test_y, pred_y), 2)}"
-        #     )
-        #     logger.info(
-        #         f"\n [true negatives  false positives]\n [false negatives  true positives] \
-        #                 \n {confusion_matrix(test_y, pred_y)}"
-        #     )
-        #
-        #     # logger.info(" Logging results into file_log.log")
-        #     logger.info("Logging test results into MLFlow")
-        #
-        #     """Log train metrics"""
-        #     # Precisionpycharm
-        #     mlflow.log_metric("Precision", np.round(df.loc["toxic", "precision"], 2))
-        #
-        #     # Recall
-        #     mlflow.log_metric("Recall", np.round(df.loc["toxic", "recall"], 2))
-        #
-        #     # macro_f1
-        #     mlflow.log_metric("F1_macro", np.round(df.loc["macro avg", "f1-score"], 2))
-        #
-        #     # weighted_f1
-        #     mlflow.log_metric(
-        #         "F1_weighted", np.round(df.loc["weighted avg", "f1-score"], 2)
-        #     )
-        #
-        #     # Best Score
-        #     # mlflow.log_metric("Best Score", "%.2f " % self.pipeline.best_score_)
-        #
-        #     # AUC
-        #     mlflow.log_metric("AUC", round(roc_auc_score(test_y, pred_y), 2))
-        #
-        #     # Confusion matrix
-        #     conf_matrix = confusion_matrix(test_y, pred_y)
-        #     mlflow.log_metric("Conf_TN", conf_matrix[0][0])
-        #     mlflow.log_metric("Conf_TP", conf_matrix[1][1])
-        #     mlflow.log_metric("Conf_FP", conf_matrix[0][1])
-        #     mlflow.log_metric("Conf_FN", conf_matrix[1][0])
-        #
-        # if self.save_model:
-        #     try:
-        #         os.mkdir("./data/")
-        #     except:
-        #         pass
-        #     """Log(save) model"""
-        #     import pickle
-        #
-        #     # Define the path to save the model
-        #     model_path = "data/classic_model.pkl"
-        #     # Save the model to a pickle file
-        #     with open(model_path, "wb") as model_file:
-        #         pickle.dump(self.pipeline, model_file)
-        #     logger.info("Model Trained and saved into MLFlow artifact location")
-        # else:
-        #     logger.info("Model Trained but not saved into MLFlow artifact location")
+    text = re.sub(r"what's", "what is ", text)
+    text = re.sub(r"\'s", " ", text)
+    text = re.sub(r"\'ve", " have ", text)
+    text = re.sub(r"can't", "cannot ", text)
+    text = re.sub(r"n't", " not ", text)
+    text = re.sub(r"i'm", "i am ", text)
+    text = re.sub(r"\'re", " are ", text)
+    text = re.sub(r"\'d", " would ", text)
+    text = re.sub(r"\'ll", " will ", text)
+    text = re.sub(r"\'scuse", " excuse ", text)
+    text = re.sub("\W", " ", text)  # != a-z, A-Z, and 0-9
+    text = re.sub(
+        "\s+", " ", text
+    )  # s(spaces)== \t \n \r (return carret on the beginning)
 
+    text = re.sub("<.*?>", " ", text)
+    text = text.translate(str.maketrans(" ", " ", string.punctuation))
+
+    # Keep ! and ? symbols
+    text = re.sub("[^a-zA-Z!?]", " ", text)
+    text = re.sub("\n", " ", text)
+    text = text.strip(" ")
+    return text
+
+
+# Text cleaned
+df["text"] = df["text"].apply(clean_text)
+
+# ## Feature Generation
+
+# Split the data into training and testing sets (80% train, 20% test)
+train_X, test_X, train_y, test_y = train_test_split(
+    df[["text"]], df2["sentiment"], test_size=0.2, random_state=RANDOM_STATE
+)
+
+
+# ### Additional features generation
+
+
+def feature_generator(df):
+    """
+    Generate and append various text-based features to a DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame containing a 'text' column.
+
+    Returns:
+        np.ndarray: An array of scaled features (including original and derived features).
+
+    This function calculates and appends the following features to the input DataFrame:
+    - Count of punctuations in each text
+    - Count of words in uppercase in each text
+    - Count of words in title case in each text
+    - Sentiment scores (negative, neutral, positive, compound) for each text
+    - Word count in each text
+    - Count of unique words in each text
+    - Count of letters in each text
+    - Number of stopwords in each text
+    - Mean word length in each text
+    - Word count percent (unique words) in each text
+    - Punctuation percent in each text
+
+    The function then scales these features and returns them as an array.
+
+    Note: The 'text' column in the input DataFrame will be modified to include cleaned text.
+    """
+    # punctuation count
+    df.loc[:, "count_punctuations"] = df["text"].apply(
+        lambda x: len([c for c in str(x) if c in string.punctuation])
+    )  # including "I'll" as punctuation
+
+    # upper case words count
+    df.loc[:, "count_words_upper"] = df["text"].apply(
+        lambda x: len([w for w in str(x).split() if w.isupper()])
+    )
+
+    # title case words count
+    df.loc[:, "count_words_title"] = df["text"].apply(
+        lambda x: len([w for w in str(x).split() if w.istitle()])
+    )
+
+    df["text"] = df["text"].apply(clean_text)
+    sentiment = SentimentIntensityAnalyzer()
+
+    # Initialize empty lists for each sentiment score
+    neg_scores = []
+    neu_scores = []
+    pos_scores = []
+    compound_scores = []
+
+    # Loop through the sentences and calculate sentiment scores
+    for sentence in df["text"]:
+        ss = sentiment.polarity_scores(sentence)
+        neg_scores.append(ss["neg"])
+        neu_scores.append(ss["neu"])
+        pos_scores.append(ss["pos"])
+        compound_scores.append(ss["compound"])
+
+    # Add sentiment scores as new columns to the DataFrame
+    df["negative"] = neg_scores
+    df["neutral"] = neu_scores
+    df["positive"] = pos_scores
+    df["compound"] = compound_scores
+    # Word count in each comment:
+    df["word_count"] = df["text"].apply(lambda x: len(x.split()))
+
+    # Unique word count
+    df.loc[:, "count_unique_word"] = df["text"].apply(
+        lambda x: len(set(str(x).split()))
+    )
+
+    # Letter count
+    df.loc[:, "count_letters"] = df["text"].apply(lambda x: len(str(x)))
+
+    # Number of stopwords
+    df.loc[:, "count_stopwords"] = df["text"].apply(
+        lambda x: len([w for w in str(x).lower().split() if w in ENGLISH_STOP_WORDS])
+    )
+
+    # Average length of the words
+    df.loc[:, "mean_word_len"] = df["text"].apply(
+        lambda x: round(np.mean([len(w) for w in str(x).split()]), 2)
+    )
+
+    # Derived features
+
+    # Word count percent in each comment:
+    df.loc[:, "word_unique_percent"] = (
+        df.loc[:, "count_unique_word"] * 100 / df["word_count"]
+    )
+    # Punct percent in each comment:
+    df.loc[:, "punct_percent"] = (
+        df.loc[:, "count_punctuations"] * 100 / df["word_count"]
+    )
+
+    # Scale features
+    scaled_features = StandardScaler().fit_transform(df.drop(columns=["text"]))
+    # ↑↑↑ we need to scale them before we stack them with tf-idf features (which we shouldn't scale at all).
+
+    return scaled_features
+
+
+# ### TF-IDF Feature Generation
+
+
+def tfidf(X, max_features=50, features: str = "all"):
+    """
+    Generate TF-IDF (Term Frequency-Inverse Document Frequency) features and optionally stack them with other features.
+
+    Args:
+        X (pd.DataFrame): The input DataFrame containing a 'text' column.
+        max_features (int): The maximum number of TF-IDF features to generate.
+        features (str): Specifies which features to return.
+            - 'all': Returns all features (scaled and TF-IDF).
+            - 'tfidf': Returns only TF-IDF features.
+
+    Returns:
+        np.ndarray: An array of selected features based on the 'features' parameter.
+
+    This function generates TF-IDF features based on the text content in the 'text' column of the input DataFrame (X).
+    The generated TF-IDF features can be stacked with other features (scaled features) or returned separately based on the 'features' parameter.
+
+    Note: The 'text' column in the input DataFrame will be used for TF-IDF feature extraction.
+    """
+    scaled_features = feature_generator(X)
+
+    # Inin vectorizer
+    tf_idf = TfidfVectorizer(
+        ngram_range=(1, 1),
+        max_features=max_features,
+    )
+
+    # Create TF-IDF features
+    tfidf_features = tf_idf.fit_transform(X.text).toarray()
+
+    # Stack them vertically
+    stacked_array = np.hstack((scaled_features, tfidf_features))
+    if features == "tfidf":
+        out = tfidf_features
+    elif features == "all":
+        out = stacked_array
+    return out
+
+
+# ### Saving Metrics to File (.jpg)
+
+
+def metrics(text, report, conf_matrix, auc, minutes, seconds, filename=None):
+    """
+    Generate classification metrics visualization and optionally save it as an image.
+
+    Args:
+        text (str): A text description or title for the metrics.
+        report (str): The classification report.
+        conf_matrix (numpy.ndarray): The confusion matrix.
+        auc (float): The area under the ROC curve (AUC) score.
+        minutes (int): The elapsed time in minutes.
+        seconds (float): The elapsed time in seconds (fractions).
+        filename (str, optional): The filename to save the visualization as an image. If not provided, the image will be displayed but not saved.
+
+    Returns:
+        None or IPython.display.Image: If a filename is provided, None is returned. Otherwise, the metrics visualization is displayed as an Image in the Jupyter Notebook.
+
+    This function generates a classification metrics visualization including a classification report, confusion matrix, AUC score, and elapsed time.
+    The visualization can be optionally saved as an image with the specified filename.
+    """
+    output_text = (
+        f"{text}\n\n"
+        "Classification Report:\n\n" + report + "\n\n"
+        "Confusion Matrix:\n" + str(conf_matrix) + "\n\n"
+        "AUC: "
+        + str(int(auc * 100) / 100.0)
+        + "\n\nElapsed time:\n"
+        + f"{minutes} minutes\n{round(seconds, 3)} seconds"
+    )
+
+    # Create a fixed-size plot with the output text
+    plt.figure(figsize=(8, 6))  # Specify the desired width and height in inches
+    plt.text(
+        0.9, 0.5, output_text, fontsize=12, ha="right", va="center", wrap=True
+    )  # Adjust x-coordinate (0.9) for right alignment
+    plt.axis("off")
+
+    if filename:
+        # Create a "metrics_pics" folder if it doesn't exist
+        metrics_folder = "metrics_pics"
+        if not os.path.exists(metrics_folder):
+            os.makedirs(metrics_folder)
+
+        # Save the plot as an image in the "metrics_pics" folder with the specified filename
+        output_image_path = os.path.join(metrics_folder, filename)
+        plt.savefig(output_image_path, bbox_inches="tight", pad_inches=0, dpi=300)
+        plt.close()
+
+        # Display the image in the Jupyter Notebook
+        return display(Image(filename=output_image_path, width=400))
+
+    # If no filename is specified, display the image without saving it
+    return display(plt.gcf())
+
+
+# ## Training
+
+
+def train_and_evaluate_model(
+    model_type,
+    hyperparameters,
+    train_X,
+    train_y,
+    test_X,
+    test_y,
+    max_features=50,
+    features="all",
+):
+    """
+    Train and evaluate a machine learning model.
+
+    Parameters:
+    - model_type (str): The type of the model to train ('logisticregression', 'svc', 'xgbclassifier').
+    - hyperparameters (dict): Hyperparameters for model tuning.
+    - train_X (array-like): Training features.
+    - train_y (array-like): Training labels.
+    - test_X (array-like): Test features.
+    - test_y (array-like): Test labels.
+    - max_features (int): Maximum number of features for TF-IDF vectorization (default: 50).
+    - features (str): Type of features to use ('all' or 'tfidf').
+
+    Returns:
+    - best_model: The best trained model.
+    """
+    # transform text to numeric features
+    train_X = tfidf(train_X, max_features=max_features, features=features)
+    test_X = tfidf(test_X, max_features=max_features, features=features)
+
+    # Create a "models" folder if it doesn't exist
+    models_folder = "models"
+    if not os.path.exists(models_folder):
+        os.makedirs(models_folder)
+
+    # Start time
+    start = datetime.now()
+
+    # Define the model based on the given model type
+    if model_type == "logisticregression":
+        model = LogisticRegression(random_state=42, max_iter=50)
+    elif model_type == "svc":
+        model = SVC(probability=True, random_state=42)
+    elif model_type == "xgbclassifier":
+        model = XGBClassifier(random_state=42)
+
+    # Create a pipeline with feature normalization and the chosen model
+    pipeline = make_pipeline(StandardScaler(with_mean=False, with_std=False), model)
+
+    # RandomizedSearchCV for hyperparameter tuning
+    grid_search = GridSearchCV(
+        estimator=pipeline, param_grid=hyperparameters, scoring="roc_auc", cv=3
+    )
+
+    grid_search.fit(train_X, train_y)
+
+    best_pipeline = grid_search.best_estimator_
+    best_model = best_pipeline.named_steps[model_type]
+    best_params = grid_search.best_params_
+    best_score = grid_search.best_score_
+
+    # End time
+    end = datetime.now()
+
+    # Calculate elapsed time
+    elapsed_time = end - start
+
+    # Extract minutes and seconds
+    minutes, seconds = divmod(elapsed_time.total_seconds(), 60)
+
+    # Specify the model name
+    model_name = f"{model_type.capitalize()} Model"
+
+    # Save the best model as a pickle file
+    model_filename = os.path.join(models_folder, f"{model_name}_model.pkl")
+    with open(model_filename, "wb") as model_file:
+        pickle.dump(best_model, model_file)
+
+    # Predict train dataset
+    pred_y = best_pipeline.predict(train_X)
+
+    # Calculate classification report, confusion matrix, AUC for train dataset
+    report = classification_report(train_y, pred_y)
+    conf_matrix = confusion_matrix(train_y, pred_y)
+    auc = roc_auc_score(train_y, pred_y)
+
+    # Train metrics to jpg
+    metrics(
+        text=f"Train set: {model_name} with TF-IDF + Additional features",
+        report=report,
+        conf_matrix=conf_matrix,
+        auc=auc,
+        minutes=minutes,
+        seconds=seconds,
+        filename=f"{model_name}_train_metrics.jpg",
+    )
+
+    # Predict test dataset
+    pred_y = best_pipeline.predict(test_X)
+
+    # Calculate classification report, confusion matrix, AUC for test dataset
+    report = classification_report(test_y, pred_y)
+    conf_matrix = confusion_matrix(test_y, pred_y)
+    auc = roc_auc_score(test_y, pred_y)
+
+    # Test metrics to jpg
+    metrics(
+        text=f"Test set: {model_name} with TF-IDF + Additional features",
+        report=report,
+        conf_matrix=conf_matrix,
+        auc=auc,
+        minutes=minutes,
+        seconds=seconds,
+        filename=f"{model_name}_test_metrics.jpg",
+    )
+
+    return best_model
+
+
+def load_model(model_name):
+    # Specify the folder where models are saved
+    models_folder = "models"
+
+    # Construct the full file path for the model
+    model_filename = os.path.join(models_folder, f"{model_name}_model.pkl")
+
+    # Load the model from the file
+    with open(model_filename, "rb") as model_file:
+        loaded_model = pickle.load(model_file)
+
+    return loaded_model
+
+
+# Define hyperparameters for the chosen model
+logreg_hyperparameters = {
+    "logisticregression__C": [0.1, 1, 5],
+    # Add hyperparameters for other models as needed
+}
+
+# Define hyperparameters for SVC
+svc_hyperparameters = {
+    "svc__C": [0.1, 1],  # Adjust the C values as needed
+    "svc__kernel": ["rbf"],  # , 'linear'],  # Adjust the kernel choices as needed
+}
+
+# Define hyperparameters for XGBClassifier
+xgb_hyperparameters = {
+    "xgbclassifier__learning_rate": [
+        0.01,
+        0.1,
+        0.3,
+    ],  # Adjust the learning rates as needed
+    "xgbclassifier__max_depth": [3, 4, 5],  # Adjust the max_depth values as needed
+    # Add other hyperparameters for XGBClassifier as needed
+}
 
 if __name__ == "__main__":
-    # Import train dataset
-    # url = "https://drive.google.com/file/d/1eEtlmdLUTZnyY34g9bL5D3XuWLzSEqBU/view?usp=sharing"
-    # path = "https://drive.google.com/uc?id=" + url.split("/")[-2]
-    # df1 = pd.read_csv(path)
-    path = "D:/Programming/DB's/Positive_negative_reviews_classification/reviews.csv"
-    # url = "https://drive.google.com/file/d/1x2Tdn1UGhQ6x08yfchUykUJvid257vFY/view?usp=sharing"
-    # path2 = "https://drive.google.com/uc?id=" + url.split("/")[-2]
-    # _target = pd.read_csv(path2)
-    target = "D:/Programming/DB's/Positive_negative_reviews_classification/labels.csv"
-
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument("--df_path", help="Reviews path", default=path)
-    parser.add_argument(
-        "--target_path", help="Target path", default=target
+    # Call the function to train and evaluate the LogReg model
+    trained_model = train_and_evaluate_model(
+        "logisticregression", logreg_hyperparameters, train_X, train_y, test_X, test_y
     )
-    parser.add_argument("--n_samples", help="How many samples to pass?", default=-1)
-    parser.add_argument(
-        "--n_trials", help="How many trials for hyperparameter tuning?", default=1
+    print("NEXT ARCHITECTURE")
+    # Call the function to train and evaluate the SVC model
+    trained_svc_model = train_and_evaluate_model(
+        "svc", svc_hyperparameters, train_X, train_y, test_X, test_y
     )
-    parser.add_argument(
-        "--classifier_type",
-        help='Choose "logreg", "svc" or "xgb"',
-        default="logreg",
+    print("NEXT ARCHITECTURE")
+    # Call the function to train and evaluate the XGBClassifier model
+    trained_xgb_model = train_and_evaluate_model(
+        "xgbclassifier", xgb_hyperparameters, train_X, train_y, test_X, test_y
     )
-    parser.add_argument(
-        "--save_model",
-        help="Choose True or False",
-        default=False,
-    )
-    args = parser.parse_args()
-
-    classifier = ClassifierModel(
-        df_path=args.df_path,
-        target_path=args.target_path,
-        n_samples=args.n_samples,
-        n_trials=args.n_trials,
-        classifier_type=args.classifier_type,
-        save_model=args.save_model,
-    )
-    classifier.train()
-    # print(classifier._training_setup())
-    # print(Split(df_path=path, target_path=target).get_train_data())

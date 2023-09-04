@@ -1,3 +1,6 @@
+*.jpg
+models/
+EDA/models/
 test/
 .idea/
 mlruns/

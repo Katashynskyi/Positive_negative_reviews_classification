@@ -1,5 +1,6 @@
 import sys
 import pandas as pd
+from train import load_model
 
 # Check if the correct number of arguments is provided
 if len(sys.argv) != 3:
@@ -18,6 +19,10 @@ except FileNotFoundError:
     sys.exit(1)
 
 print(df)
+
+# Load a model (replace 'LogisticRegression' with the desired model name)
+loaded_logreg_model = load_model("Logisticregressio Model")
+type(loaded_logreg_model)
 # Perform your inference or prediction logic on the loaded data (df) here
 # This is where you would typically process the test reviews and generate predictions
 
